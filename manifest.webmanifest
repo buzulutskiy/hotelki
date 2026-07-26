@@ -1,0 +1,17 @@
+{
+  "name": "Хотелки — список на двоих",
+  "short_name": "Хотелки",
+  "description": "Общий вишлист, ссылки, места и идеи для двоих. Работает офлайн, синхронизируется через GitHub Gist.",
+  "lang": "ru",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F4F1F7",
+  "theme_color": "#F4F1F7",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
