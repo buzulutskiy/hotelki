@@ -1,0 +1,9 @@
+{
+  "name": "hotelki-notify",
+  "private": true,
+  "type": "module",
+  "description": "Отправитель push-уведомлений для «Хотелки» (запускается из GitHub Actions).",
+  "dependencies": {
+    "web-push": "^3.6.7"
+  }
+}

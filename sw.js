@@ -1,5 +1,5 @@
 /* Хотелки — service worker. Данные (localStorage) не кэшируются, только оболочка. */
-const CACHE = "hotelki-v1";
+const CACHE = "hotelki-v2";
 const ASSETS = [
   "./", "./index.html", "./app.js", "./manifest.webmanifest",
   "./icon-180.png", "./icon-192.png", "./icon-512.png", "./favicon-32.png"
@@ -34,5 +34,30 @@ self.addEventListener("fetch", e => {
   e.respondWith(
     caches.match(req).then(cached => cached ||
       fetch(req).then(resp => { const c = resp.clone(); caches.open(CACHE).then(cc => cc.put(req, c)); return resp; }))
+  );
+});
+
+/* push-уведомления */
+self.addEventListener("push", e => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch { d = { body: e.data && e.data.text() }; }
+  const title = d.title || "Хотелки";
+  const opts = {
+    body: d.body || "",
+    icon: "./icon-192.png",
+    badge: "./icon-192.png",
+    tag: d.tag || "hotelki",
+    data: { url: d.url || "./" }
+  };
+  e.waitUntil(self.registration.showNotification(title, opts));
+});
+self.addEventListener("notificationclick", e => {
+  e.notification.close();
+  const target = (e.notification.data && e.notification.data.url) || "./";
+  e.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(list => {
+      for (const c of list) { if ("focus" in c) return c.focus(); }
+      if (self.clients.openWindow) return self.clients.openWindow(target);
+    })
   );
 });

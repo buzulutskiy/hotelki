@@ -35,6 +35,9 @@ const LS = {
 const SYNC_FILE = "hotelki-data.json";
 const SYNC_TAG = "#хотелки-sync";
 const SYNC_DESC = "Хотелки — общий список (не удалять) " + SYNC_TAG;
+const PUSH_FILE = "hotelki-push.json";
+// Публичный VAPID-ключ (пара к приватному в секретах репозитория). Публичный — не секрет.
+const VAPID_PUBLIC = "BIqpvKoU0cH21OKWV7Yuuysc96SYa5Y5fQ_GCss1M24jj9YQXCx00DNs8oznyrFeBrxxsSU35sP2cHlow-clIKI";
 
 function seedCategories() {
   const base = [
@@ -315,8 +318,19 @@ function editCategory(id) {
 }
 
 /* ---------- настройки ---------- */
-function openSettings() {
+async function openSettings() {
   const connected = cfg.token && cfg.gistId;
+  const pushSt = connected ? await pushStatus() : "off";
+  const notifHtml = !connected ? "" :
+    pushSt === "unsupported"
+      ? `<div class="note-info">🔔 Здесь push недоступен. На iPhone добавь приложение на экран «Домой» (iOS 16.4+) и открой уже оттуда.</div>`
+    : pushSt === "denied"
+      ? `<div class="note-info">🔔 Уведомления запрещены для этого сайта в настройках браузера — сначала разреши их там.</div>`
+    : pushSt === "on"
+      ? `<div class="status"><span class="pip ok"></span>Включены — придёт push, когда второй добавит хотелку</div>
+         <div class="actions"><button class="btn ghost" id="sPushOff">Выключить уведомления</button></div>`
+      : `<div class="note-info">Присылать push, когда второй добавит новое. Проверка примерно раз в 10 минут.</div>
+         <div class="actions"><button class="btn primary" id="sPushOn">🔔 Включить уведомления</button></div>`;
   const last = cfg.lastSync ? new Date(cfg.lastSync).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "ещё не было";
   const syncBox = connected
     ? `<div class="status"><span class="pip ${syncState === "error" ? "err" : "ok"}"></span>
@@ -342,6 +356,8 @@ function openSettings() {
     <div class="sec-h" style="margin:6px 4px 0"><span class="t">Синхронизация</span><span class="ln"></span></div>
     ${syncBox}
 
+    ${connected ? `<div class="sec-h" style="margin:12px 4px 0"><span class="t">Уведомления</span><span class="ln"></span></div>${notifHtml}` : ""}
+
     <div class="sec-h" style="margin:12px 4px 0"><span class="t">Оформление</span><span class="ln"></span></div>
     <div class="seg" id="sTheme">
       <button data-t="auto" class="${cfg.theme === "auto" ? "cur" : ""}">Как в системе</button>
@@ -359,6 +375,9 @@ function openSettings() {
     cfg.theme = b.dataset.t; saveCfg(); applyTheme();
     $("#sTheme").querySelectorAll("button").forEach(x => x.classList.toggle("cur", x === b));
   });
+
+  const pOn = $("#sPushOn"); if (pOn) pOn.onclick = enablePush;
+  const pOff = $("#sPushOff"); if (pOff) pOff.onclick = disablePush;
 
   if (connected) {
     $("#sSyncNow").onclick = () => { closeSheet(); syncNow(true); };
@@ -507,6 +526,75 @@ function markDirty() {
   setSync("dirty");
   clearTimeout(pushTimer);
   pushTimer = setTimeout(() => syncNow(false), 1500);
+}
+
+/* ---------- push-уведомления ---------- */
+function b64ToU8(b64) {
+  const pad = "=".repeat((4 - (b64.length % 4)) % 4);
+  const s = (b64 + pad).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(s), arr = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+  return arr;
+}
+function pushSupported() {
+  return ("Notification" in window) && ("serviceWorker" in navigator) && ("PushManager" in window);
+}
+async function pushStatus() {
+  if (!pushSupported()) return "unsupported";
+  if (Notification.permission === "denied") return "denied";
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    const sub = reg && await reg.pushManager.getSubscription();
+    return sub ? "on" : "off";
+  } catch { return "off"; }
+}
+async function patchPushFile(mutate) {
+  const r = await gh("/gists/" + cfg.gistId);
+  if (!r.ok) throw new Error("Гист недоступен (" + r.status + ")");
+  const g = await r.json();
+  let pf = { subscriptions: [] };
+  const f = g.files && g.files[PUSH_FILE];
+  if (f) { let t = f.content; if (f.truncated && f.raw_url) t = await (await fetch(f.raw_url)).text(); try { pf = JSON.parse(t) || pf; } catch {} }
+  if (!pf.subscriptions) pf.subscriptions = [];
+  mutate(pf);
+  const pr = await gh("/gists/" + cfg.gistId, { method: "PATCH", body: JSON.stringify({ files: { [PUSH_FILE]: { content: JSON.stringify(pf) } } }) });
+  if (!pr.ok) throw new Error("Не удалось сохранить подписку (" + pr.status + ")");
+}
+async function enablePush() {
+  if (!pushSupported()) {
+    alert("Здесь push недоступен. На iPhone добавь приложение на экран «Домой» (нужен iOS 16.4+) и открой уже оттуда.");
+    return;
+  }
+  if (!cfg.token || !cfg.gistId) { toast("Сначала подключи синхронизацию"); return; }
+  try {
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted") { toast("Уведомления не разрешены"); return; }
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToU8(VAPID_PUBLIC) });
+    const json = sub.toJSON();
+    await patchPushFile(pf => {
+      pf.subscriptions = pf.subscriptions.filter(s => !(s.sub && s.sub.endpoint === json.endpoint));
+      pf.subscriptions.push({ name: cfg.me || "", sub: json, addedAt: now() });
+    });
+    toast("Уведомления включены ✓");
+    if ($("#sheet").classList.contains("show")) openSettings();
+  } catch (e) { alert("Не удалось включить: " + (e.message || e)); }
+}
+async function disablePush() {
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (sub) {
+      const ep = sub.toJSON().endpoint;
+      if (cfg.token && cfg.gistId) {
+        try { await patchPushFile(pf => { pf.subscriptions = pf.subscriptions.filter(s => !(s.sub && s.sub.endpoint === ep)); }); } catch {}
+      }
+      await sub.unsubscribe();
+    }
+    toast("Уведомления выключены");
+    if ($("#sheet").classList.contains("show")) openSettings();
+  } catch (e) { alert(e.message || e); }
 }
 
 /* ---------- композер ---------- */

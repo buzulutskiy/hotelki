@@ -1,0 +1,28 @@
+name: push-notify
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"   # каждые ~10 минут (GitHub может задерживать)
+  workflow_dispatch:          # можно запустить вручную из вкладки Actions
+
+concurrency:
+  group: hotelki-notify
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install deps
+        run: npm install --prefix notify --no-audit --no-fund
+      - name: Send notifications
+        run: node notify/notify.mjs
+        env:
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+          VAPID_PRIVATE: ${{ secrets.VAPID_PRIVATE }}
+          VAPID_PUBLIC: ${{ vars.VAPID_PUBLIC }}
+          VAPID_SUBJECT: ${{ vars.VAPID_SUBJECT }}
